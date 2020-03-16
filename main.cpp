@@ -245,7 +245,7 @@ bool PackFile(Parser* parser, HANDLE hFile) {
         }
     }
     */
-     //ObfuscateIAT((IMAGE_DOS_HEADER*)mappedFile, (IMAGE_NT_HEADERS*)(mappedFile + reinterpret_cast<IMAGE_DOS_HEADER*>(mappedFile)->e_lfanew));
+     ObfuscateIAT((IMAGE_DOS_HEADER*)mappedFile, (IMAGE_NT_HEADERS*)(mappedFile + reinterpret_cast<IMAGE_DOS_HEADER*>(mappedFile)->e_lfanew));
 
     char* compressedCode = (char *) malloc(sizeof(char) * parser->ntHeader64.OptionalHeader.SizeOfImage);
     printf("SizeOfImage : %08X\n", parser->ntHeader64.OptionalHeader.SizeOfImage);
