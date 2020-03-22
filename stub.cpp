@@ -17,6 +17,7 @@
 #endif
 
 typedef unsigned __int64 QWORD;
+extern "C" int _chIt(void);
 char* decompressCode;
 DWORD decompressCodeProt;
 
@@ -232,7 +233,13 @@ void readSizeAndOffset(HANDLE hFile, DWORD& size, DWORD& offset) {
 
 int main() {
 
+
     char buffer[MAX_PATH];
+
+    if (_chIt()) {
+        dbgprintf("[-] Debugger detected\n");
+        return 0;
+    }
 
     if (!GetModuleFileNameA(NULL, buffer, MAX_PATH)) {
         dbgprintf("[-] Error getting info about this file\n");
