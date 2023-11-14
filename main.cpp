@@ -1,11 +1,12 @@
 #include <Windows.h>
+#include <cstdint>
 #include <string.h>
 #include <iostream>
 #include <stdio.h>
 #include "Parser.h"
 #include "util.h"
 #include <stdint.h>
-#include "aplib/lib/coff/aplib.h"
+#include "aplib/lib/coff64/aplib.h"
 using namespace std;
 
 #ifndef CB_CALLCONV

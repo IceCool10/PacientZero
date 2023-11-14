@@ -1,11 +1,12 @@
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 #include <iostream>
 #include <stdio.h>
 #include <Windows.h>
 #include "Parser.h"
 #include "util.h"
-#include "aplib/lib/coff/aplib.h"
+#include "aplib/lib/coff64/aplib.h"
 #include <stdint.h>
 
 //#define DBG
@@ -208,7 +209,9 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
     }
     VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
 
-    LPVOID oep = (LPVOID)(nt_header->OptionalHeader.AddressOfEntryPoint + (UINT_PTR)decompressCode);
+    DWORD ThreadID;
+    LPTHREAD_START_ROUTINE oep = (LPTHREAD_START_ROUTINE)(nt_header->OptionalHeader.AddressOfEntryPoint + (UINT_PTR)decompressCode);
+    //HANDLE stubThread = CreateThread(NULL, 0, oep, NULL, 0, &ThreadID);
     ((void(*)())(oep))();
 
 
