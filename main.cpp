@@ -246,7 +246,7 @@ bool PackFile(Parser* parser, HANDLE hFile) {
         }
     }
     */
-     ObfuscateIAT((IMAGE_DOS_HEADER*)mappedFile, (IMAGE_NT_HEADERS*)(mappedFile + reinterpret_cast<IMAGE_DOS_HEADER*>(mappedFile)->e_lfanew));
+     //ObfuscateIAT((IMAGE_DOS_HEADER*)mappedFile, (IMAGE_NT_HEADERS*)(mappedFile + reinterpret_cast<IMAGE_DOS_HEADER*>(mappedFile)->e_lfanew));
 
     char* compressedCode = (char *) malloc(sizeof(char) * parser->ntHeader64.OptionalHeader.SizeOfImage);
     printf("SizeOfImage : %08X\n", parser->ntHeader64.OptionalHeader.SizeOfImage);
@@ -270,17 +270,23 @@ int main(int argc, char** argv) {
     HANDLE inputFile = CreateFileA(argv[1], GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (inputFile == INVALID_HANDLE_VALUE) {
         printf("[-] Invalid File\n");
+        DWORD err = GetLastError();
+        printf("[*] ERROR : %16llX\n", err);
         return -1;
     }
 
     Parser peParser(inputFile);
     if (peParser.parsePE() == false ) {
         printf("[-] Error parsing file\n");
+        DWORD err = GetLastError();
+        printf("[*] ERROR : %16llX\n", err);
         return -1;
     }
 
     if (PackFile(&peParser, inputFile) == false) {
         printf("[-] Error packing file\n");
+        DWORD err = GetLastError();
+        printf("[*] ERROR : %16llX\n", err);
         return -1;
     }
 

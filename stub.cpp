@@ -9,7 +9,7 @@
 #include "aplib/lib/coff64/aplib.h"
 #include <stdint.h>
 
-//#define DBG
+#define DBG
 
 #ifdef DBG
     #define dbgprintf printf
@@ -19,6 +19,7 @@
 
 typedef unsigned __int64 QWORD;
 extern "C" int _chIt(void);
+extern "C" void addIndexToTLSArray(DWORD newTLSIndex, PVOID tlsData);
 char* decompressCode;
 DWORD decompressCodeProt;
 
@@ -147,6 +148,44 @@ LONG WINAPI ExceptionHandler(PEXCEPTION_POINTERS exPtr) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
                             
+void CallTLSCallbacks(IMAGE_NT_HEADERS* nt, char* decompressedCode) {
+
+    if ((nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress == 0) || (nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].Size == 0)) {
+        return;
+    }
+    DWORD tlsAddress = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
+    IMAGE_TLS_DIRECTORY* originalTLS = reinterpret_cast<IMAGE_TLS_DIRECTORY*>(decompressedCode + tlsAddress);
+
+    PIMAGE_TLS_CALLBACK* ptls = (PIMAGE_TLS_CALLBACK*)originalTLS->AddressOfCallBacks;
+    if (ptls) {
+        while(*ptls) {
+            (*ptls)((PVOID)decompressedCode, DLL_THREAD_ATTACH, 0);
+            ptls++;
+        }
+    }
+}
+
+
+void SetTLSIndex(IMAGE_NT_HEADERS* nt, char* decompressedCode) {
+    
+    if ((nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress == 0) || (nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].Size == 0)) {
+        return;
+    }
+    DWORD tlsAddress = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_TLS].VirtualAddress;
+    IMAGE_TLS_DIRECTORY* originalTLS = reinterpret_cast<IMAGE_TLS_DIRECTORY*>(decompressedCode + tlsAddress);
+
+    DWORD newTLSIndex = TlsAlloc();
+    if (newTLSIndex == TLS_OUT_OF_INDEXES) {
+        return;
+    }
+    PVOID tlsData;
+
+    *((DWORD*)originalTLS->AddressOfIndex) = newTLSIndex;
+    addIndexToTLSArray(newTLSIndex, tlsData);
+    DWORD tlsDataSize = originalTLS->EndAddressOfRawData - originalTLS->StartAddressOfRawData;
+    memcpy(tlsData, (PVOID)originalTLS->StartAddressOfRawData,tlsDataSize);
+    memset((PVOID) originalTLS->EndAddressOfRawData, 0, originalTLS->SizeOfZeroFill);
+}
 
 bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
 
@@ -168,7 +207,7 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
     }
 
 	unsigned depackedsize = aPsafe_get_orig_size(compressedCode);
-    decompressCodeProt = PAGE_NOACCESS;
+    decompressCodeProt = PAGE_EXECUTE_READWRITE;
     decompressCode = (char*) VirtualAlloc(NULL, depackedsize, MEM_COMMIT | MEM_RESERVE, decompressCodeProt);
 
     if (!VirtualQuery((LPVOID)decompressCode, &memory, sizeof(MEMORY_BASIC_INFORMATION))) {
@@ -176,16 +215,15 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
         return false;
     }
 
-    AddVectoredExceptionHandler(1, ExceptionHandler  );
+    //AddVectoredExceptionHandler(1, ExceptionHandler  );
     if (decompress(compressedCode, decompressCode, depackedsize, size) != 0) {
         dbgprintf("[-] Error decompress code\n");
         free(compressedCode);
         return false;
     }
 
-    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
     dbgprintf("[*] Before DeobfuscateIAT\n");
-    DeobfuscateIAT((IMAGE_DOS_HEADER*)decompressCode, (IMAGE_NT_HEADERS*) (decompressCode + reinterpret_cast<IMAGE_DOS_HEADER*>(decompressCode)->e_lfanew));
+    //DeobfuscateIAT((IMAGE_DOS_HEADER*)decompressCode, (IMAGE_NT_HEADERS*) (decompressCode + reinterpret_cast<IMAGE_DOS_HEADER*>(decompressCode)->e_lfanew));
     dbgprintf("[*] DeobfuscateIAT\n");
 
 
@@ -193,7 +231,6 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
 
     dbgprintf("[*] Before FixImageIAT\n");
 
-    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
     FixImageIAT((IMAGE_DOS_HEADER*) decompressCode, nt_header);
     dbgprintf("[*] FixImageIAT\n");
 
@@ -202,15 +239,17 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
         if (difference) {
             dbgprintf("[*] Before FixImageReloc\n");
 
-            VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
             FixImageRelocations((IMAGE_DOS_HEADER*) decompressCode, nt_header, difference);
             dbgprintf("[*] FixImageReloc\n");
         }
     }
-    VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
+    //VirtualProtect(memory.BaseAddress, memory.RegionSize, PAGE_NOACCESS, &oldProt);
 
     DWORD ThreadID;
     LPTHREAD_START_ROUTINE oep = (LPTHREAD_START_ROUTINE)(nt_header->OptionalHeader.AddressOfEntryPoint + (UINT_PTR)decompressCode);
+    CallTLSCallbacks(nt_header, decompressCode);
+    SetTLSIndex(nt_header, decompressCode);
+    dbgprintf("oep :%16llX\n", oep);
     //HANDLE stubThread = CreateThread(NULL, 0, oep, NULL, 0, &ThreadID);
     ((void(*)())(oep))();
 
@@ -246,6 +285,8 @@ int main() {
 
     if (!GetModuleFileNameA(NULL, buffer, MAX_PATH)) {
         dbgprintf("[-] Error getting info about this file\n");
+        DWORD err = GetLastError();
+        printf("[*] ERROR : %16llX\n", err);
         return -1;
     }
 
@@ -254,6 +295,8 @@ int main() {
     HANDLE thisFile = CreateFileA(buffer, GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (thisFile == INVALID_HANDLE_VALUE) {
         dbgprintf("[-] Invalid File\n");
+        DWORD err = GetLastError();
+        printf("[*] ERROR : %16llX\n", err);
         return -1;
     }
 
