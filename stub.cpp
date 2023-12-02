@@ -49,6 +49,100 @@ VOID DeobfuscateDllFunction(BYTE* functionName) {
     }
 }
 
+VOID LoadDelayedImports( PIMAGE_DOS_HEADER dos_header, PIMAGE_NT_HEADERS nt_header)
+{
+    PIMAGE_THUNK_DATA thunk;
+    PIMAGE_THUNK_DATA fixup;
+    DWORD iat_rva;
+    SIZE_T iat_size;
+    HMODULE import_base;
+    PIMAGE_DELAY_IMPORT_DESCRIPTOR delay_import_table =
+        (PIMAGE_DELAY_IMPORT_DESCRIPTOR)(nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress + 
+            (UINT_PTR)dos_header);
+
+    if ((get_dword_le(&nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].VirtualAddress, 0) == 0) || (get_dword_le(&nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT].Size, 0) == 0)) {
+        return;
+    }
+    DWORD iat_loc =
+        (nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IAT].VirtualAddress) ? 
+        IMAGE_DIRECTORY_ENTRY_IAT : 
+        IMAGE_DIRECTORY_ENTRY_IMPORT;
+
+    iat_rva = nt_header->OptionalHeader.DataDirectory[iat_loc].VirtualAddress;
+    iat_size = nt_header->OptionalHeader.DataDirectory[iat_loc].Size;
+
+    LPVOID iat = (LPVOID)(iat_rva + (UINT_PTR)dos_header);
+    DWORD op;
+    VirtualProtect(iat, iat_size, PAGE_READWRITE, &op);
+        while (delay_import_table->szName) {
+            //import_base = LoadLibraryA((LPCSTR)(import_table->Name + (UINT_PTR)dos_header));
+            BYTE* dllName = (BYTE*)(delay_import_table->szName + (UINT_PTR)dos_header);
+            dbgprintf("dllName in LoadDelayedImports %s\n", dllName);
+            HMODULE delayedDLL = LoadLibraryA((LPCSTR)dllName);
+            if (delayedDLL == NULL) {
+                dbgprintf("[-] ERROR loading delayedDLL\n");
+                break;
+            }
+            dbgprintf("[+] DLL loaded successfully\n");
+            DWORD iatRVA = delay_import_table->pIAT;
+            QWORD* iatVA  = reinterpret_cast<QWORD*>(iatRVA + (BYTE*) dos_header);
+            // TODO add module to phmod in IMAGE_DELAY_IMPORT_DESCRIPTOR
+            BYTE* intVA  = delay_import_table->pINT + (BYTE*) dos_header;
+            QWORD functionNameRVA = get_qword_le(intVA, 0);
+            while(functionNameRVA) {
+                
+                BYTE* functionName = (BYTE*) dos_header + functionNameRVA + 2;
+                dbgprintf("[*] DLL function name : %s\n", functionName);
+                QWORD functionVA = (QWORD) GetProcAddress(delayedDLL, (LPCSTR)functionName);
+                
+                dbgprintf("[*] functionVA : %16llX\n", functionVA);           
+                *iatVA = functionVA;
+                dbgprintf("iatVA address %p with value %16llX\n", iatVA, *iatVA);
+                iatVA++;
+
+                intVA += sizeof(QWORD);
+                functionNameRVA = get_qword_le(intVA, 0);
+            }
+            
+            *iatVA = 0;
+            iatVA++;
+
+            intVA += sizeof(QWORD);
+            
+            
+            //DeobfuscateDllName(dllName);
+
+
+/*
+            fixup = (PIMAGE_THUNK_DATA)(delay_import_table->FirstThunk + (UINT_PTR)dos_header);
+            if (delay_import_table->OriginalFirstThunk) {
+                thunk = (PIMAGE_THUNK_DATA)(delay_import_table->OriginalFirstThunk + (UINT_PTR)dos_header);
+            } else {
+                thunk = (PIMAGE_THUNK_DATA)(delay_import_table->FirstThunk + (UINT_PTR)dos_header);
+            }
+
+            while (thunk->u1.Function) {
+                PCHAR func_name;
+                if (thunk->u1.Ordinal & IMAGE_ORDINAL_FLAG64) {
+                    fixup->u1.Function = 
+                        (UINT_PTR)GetProcAddress(import_base, (LPCSTR)(thunk->u1.Ordinal & 0xFFFF));
+
+                } else {
+                    func_name = 
+                        (PCHAR)(((PIMAGE_IMPORT_BY_NAME)(thunk->u1.AddressOfData))->Name + (UINT_PTR)dos_header);
+                    //fixup->u1.Function = (UINT_PTR)GetProcAddress(import_base, func_name);
+                    DeobfuscateDllFunction((BYTE*)func_name);
+                }
+                fixup++;
+                thunk++;
+            }
+*/
+            delay_import_table++;
+        }
+
+    return;
+}
+
 VOID DeobfuscateIAT( PIMAGE_DOS_HEADER dos_header, PIMAGE_NT_HEADERS nt_header)
 {
     PIMAGE_THUNK_DATA thunk;
@@ -57,6 +151,7 @@ VOID DeobfuscateIAT( PIMAGE_DOS_HEADER dos_header, PIMAGE_NT_HEADERS nt_header)
     SIZE_T iat_size;
     HMODULE import_base;
     PIMAGE_IMPORT_DESCRIPTOR import_table =
+
         (PIMAGE_IMPORT_DESCRIPTOR)(nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress + 
             (UINT_PTR)dos_header);
 
@@ -232,6 +327,7 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
     dbgprintf("[*] Before FixImageIAT\n");
 
     FixImageIAT((IMAGE_DOS_HEADER*) decompressCode, nt_header);
+    LoadDelayedImports((IMAGE_DOS_HEADER*) decompressCode, nt_header);
     dbgprintf("[*] FixImageIAT\n");
 
     if (nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress) {

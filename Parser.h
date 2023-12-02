@@ -1,22 +1,6 @@
 #pragma once
 #include <Windows.h>
-
-typedef unsigned __int64 QWORD;
-
-static unsigned long get_word_le(const void *pData, int pos)   {
-    const unsigned char *pdata = static_cast<const unsigned char *>(pData);
-    return pdata[pos + 0] | (unsigned (pdata[pos + 1]) << 8);
-}
-
-static unsigned long get_dword_le(const void *pData, int pos)   {
-    const unsigned char *pdata = static_cast<const unsigned char *>(pData);
-    return pdata[pos + 0] | (unsigned (pdata[pos + 1]) << 8) | (unsigned (pdata[pos + 2]) << 16) | (unsigned (pdata[pos + 3]) << 24);
-}
-
-static unsigned long get_qword_le(const void *pData, int pos)   {
-    const unsigned char *pdata = static_cast<const unsigned char *>(pData);
-    return pdata[pos + 0] | (QWORD (pdata[pos + 1]) << 8) | (QWORD (pdata[pos + 2]) << 16) | (QWORD (pdata[pos + 3]) << 24) | (QWORD (pdata[pos + 4]) << 32) | (QWORD (pdata[pos + 5]) << 40) | (QWORD (pdata[pos + 6]) << 48) | (QWORD (pdata[pos + 7]) << 56);
-}
+#include "util.h"
 
 
 class Parser {
