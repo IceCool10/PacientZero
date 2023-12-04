@@ -85,9 +85,12 @@ VOID LoadDelayedImports( PIMAGE_DOS_HEADER dos_header, PIMAGE_NT_HEADERS nt_head
             }
             dbgprintf("[+] DLL loaded successfully\n");
             DWORD iatRVA = delay_import_table->pIAT;
+            DWORD moduleRVA = delay_import_table->phmod;
             QWORD* iatVA  = reinterpret_cast<QWORD*>(iatRVA + (BYTE*) dos_header);
+            QWORD* moduleVA = reinterpret_cast<QWORD*>(moduleRVA + (BYTE*) dos_header);
             // TODO add module to phmod in IMAGE_DELAY_IMPORT_DESCRIPTOR
             BYTE* intVA  = delay_import_table->pINT + (BYTE*) dos_header;
+            *moduleVA = (QWORD)delayedDLL;
             QWORD functionNameRVA = get_qword_le(intVA, 0);
             while(functionNameRVA) {
                 
@@ -327,7 +330,6 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
     dbgprintf("[*] Before FixImageIAT\n");
 
     FixImageIAT((IMAGE_DOS_HEADER*) decompressCode, nt_header);
-    LoadDelayedImports((IMAGE_DOS_HEADER*) decompressCode, nt_header);
     dbgprintf("[*] FixImageIAT\n");
 
     if (nt_header->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_BASERELOC].VirtualAddress) {
@@ -345,6 +347,7 @@ bool PacientZeroDecompress(HANDLE hFile, DWORD size, DWORD offset) {
     LPTHREAD_START_ROUTINE oep = (LPTHREAD_START_ROUTINE)(nt_header->OptionalHeader.AddressOfEntryPoint + (UINT_PTR)decompressCode);
     CallTLSCallbacks(nt_header, decompressCode);
     SetTLSIndex(nt_header, decompressCode);
+    LoadDelayedImports((IMAGE_DOS_HEADER*) decompressCode, nt_header);
     dbgprintf("oep :%16llX\n", oep);
     //HANDLE stubThread = CreateThread(NULL, 0, oep, NULL, 0, &ThreadID);
     ((void(*)())(oep))();
